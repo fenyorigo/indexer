@@ -1,0 +1,16 @@
+exiftool_path: ""
+image_extensions:
+  - .jpg
+  - .jpeg
+  - .png
+  - .tif
+  - .tiff
+  - .heic
+  - .webp
+video_extensions:
+  - .mp4
+  - .mov
+  - .m4v
+  - .avi
+hash_mode: none # none|quick|sha256
+mime_mode: ext # ext|magic|filecmd
