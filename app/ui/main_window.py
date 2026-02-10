@@ -51,6 +51,8 @@ class ScanWorker(QObject):
         selections: list[DirectorySelection],
         dry_run: bool,
         changed_only: bool,
+        errors_log_path: Optional[Path],
+        db_path: Path,
     ) -> None:
         super().__init__()
         self.db_path = db_path
@@ -59,6 +61,8 @@ class ScanWorker(QObject):
         self.selections = selections
         self.dry_run = dry_run
         self.changed_only = changed_only
+        self.errors_log_path = errors_log_path
+        self.db_path = db_path
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -76,6 +80,8 @@ class ScanWorker(QObject):
                 changed_only=self.changed_only,
                 cancel_check=lambda: self._cancelled,
                 progress_cb=lambda current, total, path: self.progress.emit(current, total, path),
+                errors_log_path=self.errors_log_path,
+                db_path=self.db_path,
             )
             db.close()
             self.finished.emit(summary)
@@ -354,6 +360,13 @@ class MainWindow(QMainWindow):
 
         return selections
 
+    def _resolve_errors_log_path(self) -> Optional[Path]:
+        if self.config.errors_log_path:
+            return Path(self.config.errors_log_path)
+        if not self.db_path:
+            return None
+        return self.db_path.with_suffix("").with_suffix(".errors.jsonl")
+
     def start_scan(self) -> None:
         if not self.db_path or not self.scan_root:
             QMessageBox.warning(self, "Missing data", "Choose a DB and scan root first.")
@@ -377,6 +390,8 @@ class MainWindow(QMainWindow):
             selections,
             self.dry_run_checkbox.isChecked(),
             self.changed_only_checkbox.isChecked(),
+            self._resolve_errors_log_path(),
+            self.db_path,
         )
         self.worker.moveToThread(self.worker_thread)
         self.worker_thread.started.connect(self.worker.run)
@@ -442,7 +457,13 @@ class MainWindow(QMainWindow):
             f"Scanned {result.stats.directories} directories\n"
             f"Indexed {result.stats.images} images\n"
             f"Indexed {result.stats.videos} videos\n"
+            f"Warnings: {result.stats.warnings}\n"
             f"Errors: {result.stats.errors}\n"
+            + (
+                f"See errors log: {self._resolve_errors_log_path()}\n"
+                if result.stats.errors > 0
+                else ""
+            )
             f"Tags added: {result.stats.tags_added}\n"
             f"Tag links added: {result.stats.file_tag_links_added}\n"
             f"Category tags added: {result.stats.category_tags_added}\n"
@@ -475,6 +496,7 @@ class MainWindow(QMainWindow):
             f"Directories: {result.stats.directories}",
             f"Images: {result.stats.images}",
             f"Videos: {result.stats.videos}",
+            f"Warnings: {result.stats.warnings}",
             f"Errors: {result.stats.errors}",
             f"Tags added: {result.stats.tags_added}",
             f"Tag links added: {result.stats.file_tag_links_added}",
@@ -496,6 +518,8 @@ class MainWindow(QMainWindow):
             for key in ordered_keys:
                 count = self.last_taken_src_dist.get(key, 0)
                 lines.append(f"  {key.ljust(width)}: {count}")
+        if result.stats.errors > 0:
+            lines.append(f"See errors log: {self._resolve_errors_log_path()}")
         lines.append(f"Cancelled: {result.cancelled}")
         layout.addWidget(QLabel("\n".join(lines)))
 
@@ -528,6 +552,7 @@ class MainWindow(QMainWindow):
             "directories": result.stats.directories,
             "images": result.stats.images,
             "videos": result.stats.videos,
+            "warnings": result.stats.warnings,
             "errors": result.stats.errors,
             "tags_added": result.stats.tags_added,
             "file_tag_links_added": result.stats.file_tag_links_added,

@@ -34,6 +34,7 @@ python3 -m app --cli --db /path/to/photos.db --root /path/to/photos --dry-run
 python3 -m app --cli --db /path/to/photos.db --root /path/to/photos --changed-only
 python3 -m app --cli --db /path/to/photos.db --root /path/to/photos --include-root-files
 python3 -m app --cli --db /path/to/photos.db --root /path/to/photos --json --report scan_report.json
+python3 -m app --cli --db /path/to/photos.db --root /path/to/photos --errors-log /path/to/errors.jsonl
 ```
 
 Fedora example:

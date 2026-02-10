@@ -12,6 +12,8 @@ from typing import Callable, Iterable, Optional
 from app.core.config import AppConfig
 from app.core.db import Database
 from app.core.exiftool import (
+    ExiftoolError,
+    ExiftoolParseError,
     find_exiftool,
     parse_dimensions,
     parse_gps,
@@ -21,6 +23,9 @@ from app.core.exiftool import (
     run_exiftool,
 )
 from app.core.models import DirectorySelection, ScanResult, ScanStats
+
+import traceback
+from datetime import datetime, timezone
 
 
 def _iter_files_non_recursive(directory: Path) -> Iterable[Path]:
@@ -90,12 +95,16 @@ def scan(
     cancel_check: Optional[Callable[[], bool]] = None,
     progress_cb: Optional[Callable[[int, int, str], None]] = None,
     file_progress_cb: Optional[Callable[[str], None]] = None,
+    warning_cb: Optional[Callable[[str], None]] = None,
+    errors_log_path: Optional[Path] = None,
+    db_path: Optional[Path] = None,
 ) -> ScanResult:
     root_id = db.ensure_root(str(root_path)) if not dry_run else -1
     stats = ScanStats(
         directories=0,
         images=0,
         videos=0,
+        warnings=0,
         errors=0,
         tags_added=0,
         file_tag_links_added=0,
@@ -113,6 +122,7 @@ def scan(
             directories=stats.directories,
             images=stats.images,
             videos=stats.videos,
+            warnings=stats.warnings,
             errors=stats.errors + 1,
             tags_added=stats.tags_added,
             file_tag_links_added=stats.file_tag_links_added,
@@ -121,6 +131,7 @@ def scan(
         )
         return ScanResult(stats=stats, cancelled=False)
 
+    errors_log = _resolve_errors_log_path(errors_log_path, db_path)
     jobs = _build_jobs(selections)
     total_jobs = len(jobs)
     processed_jobs = 0
@@ -151,9 +162,35 @@ def scan(
         exif_records = []
         if files:
             try:
-                exif_records = run_exiftool(exiftool_path, files)
-            except Exception as exc:
+                exif_records, warning = run_exiftool(exiftool_path, files)
+                if warning:
+                    stats = ScanStats(
+                        directories=stats.directories,
+                        images=stats.images,
+                        videos=stats.videos,
+                        warnings=stats.warnings + 1,
+                        errors=stats.errors,
+                        tags_added=stats.tags_added,
+                        file_tag_links_added=stats.file_tag_links_added,
+                        category_tags_added=stats.category_tags_added,
+                        value_tags_added=stats.value_tags_added,
+                    )
+                    if warning_cb:
+                        warning_cb(warning)
+            except ExiftoolError as exc:
                 error_in_dir = True
+                _log_error(
+                    errors_log,
+                    root_path,
+                    directory_path,
+                    None,
+                    None,
+                    "exiftool",
+                    exc,
+                    exiftool_exit_code=exc.exit_code,
+                    exiftool_stderr=exc.stderr,
+                    exiftool_stdout=exc.stdout,
+                )
                 if not dry_run:
                     db.rollback()
                     db.log_error("exiftool", str(directory_path), str(exc))
@@ -163,6 +200,70 @@ def scan(
                     directories=stats.directories,
                     images=stats.images,
                     videos=stats.videos,
+                    errors=stats.errors + 1,
+                    warnings=stats.warnings,
+                    tags_added=stats.tags_added,
+                    file_tag_links_added=stats.file_tag_links_added,
+                    category_tags_added=stats.category_tags_added,
+                    value_tags_added=stats.value_tags_added,
+                )
+                processed_jobs += 1
+                if progress_cb:
+                    progress_cb(processed_jobs, total_jobs, str(directory_path))
+                continue
+            except ExiftoolParseError as exc:
+                error_in_dir = True
+                _log_error(
+                    errors_log,
+                    root_path,
+                    directory_path,
+                    None,
+                    None,
+                    "parse_json",
+                    exc,
+                    exiftool_stdout=exc.stdout,
+                )
+                if not dry_run:
+                    db.rollback()
+                    db.log_error("parse_json", str(directory_path), str(exc))
+                    if directory_id is not None:
+                        db.update_directory_status(directory_id, "error")
+                stats = ScanStats(
+                    directories=stats.directories,
+                    images=stats.images,
+                    videos=stats.videos,
+                    warnings=stats.warnings,
+                    errors=stats.errors + 1,
+                    tags_added=stats.tags_added,
+                    file_tag_links_added=stats.file_tag_links_added,
+                    category_tags_added=stats.category_tags_added,
+                    value_tags_added=stats.value_tags_added,
+                )
+                processed_jobs += 1
+                if progress_cb:
+                    progress_cb(processed_jobs, total_jobs, str(directory_path))
+                continue
+            except Exception as exc:
+                error_in_dir = True
+                _log_error(
+                    errors_log,
+                    root_path,
+                    directory_path,
+                    None,
+                    None,
+                    "exiftool",
+                    exc,
+                )
+                if not dry_run:
+                    db.rollback()
+                    db.log_error("exiftool", str(directory_path), str(exc))
+                    if directory_id is not None:
+                        db.update_directory_status(directory_id, "error")
+                stats = ScanStats(
+                    directories=stats.directories,
+                    images=stats.images,
+                    videos=stats.videos,
+                    warnings=stats.warnings,
                     errors=stats.errors + 1,
                     tags_added=stats.tags_added,
                     file_tag_links_added=stats.file_tag_links_added,
@@ -193,6 +294,8 @@ def scan(
                 stats,
                 record_map.get(str(file_path)),
                 dry_run=dry_run,
+                errors_log=errors_log,
+                directory_path=directory_path,
             )
             if file_progress_cb:
                 file_progress_cb(str(file_path))
@@ -261,6 +364,7 @@ def _recount_dirs(stats: ScanStats, counted_dirs: set[str]) -> ScanStats:
         directories=len(counted_dirs),
         images=stats.images,
         videos=stats.videos,
+        warnings=stats.warnings,
         errors=stats.errors,
         tags_added=stats.tags_added,
         file_tag_links_added=stats.file_tag_links_added,
@@ -279,6 +383,8 @@ def _process_file(
     exif_record: Optional[dict],
     *,
     dry_run: bool,
+    errors_log: Optional[Path],
+    directory_path: Path,
 ) -> tuple[ScanStats, bool]:
     if _is_hidden(file_path):
         return stats, False
@@ -300,12 +406,24 @@ def _process_file(
     try:
         stat = file_path.stat()
     except OSError as exc:
+        _log_error(
+            errors_log,
+            root_path,
+            directory_path,
+            file_path,
+            rel_path,
+            "stat",
+            exc,
+            file_type=file_type,
+            ext=ext,
+        )
         if not dry_run:
             db.log_error("stat", str(file_path), str(exc))
         return ScanStats(
             directories=stats.directories,
             images=stats.images,
             videos=stats.videos,
+            warnings=stats.warnings,
             errors=stats.errors + 1,
             tags_added=stats.tags_added,
             file_tag_links_added=stats.file_tag_links_added,
@@ -313,7 +431,31 @@ def _process_file(
             value_tags_added=stats.value_tags_added,
         ), True
 
-    taken_ts, taken_src = parse_taken_ts(exif_record or {}, int(stat.st_mtime))
+    try:
+        taken_ts, taken_src = parse_taken_ts(exif_record or {}, int(stat.st_mtime))
+    except Exception as exc:
+        _log_error(
+            errors_log,
+            root_path,
+            directory_path,
+            file_path,
+            rel_path,
+            "taken_ts_parse",
+            exc,
+            file_type=file_type,
+            ext=ext,
+        )
+        return ScanStats(
+            directories=stats.directories,
+            images=stats.images,
+            videos=stats.videos,
+            warnings=stats.warnings,
+            errors=stats.errors + 1,
+            tags_added=stats.tags_added,
+            file_tag_links_added=stats.file_tag_links_added,
+            category_tags_added=stats.category_tags_added,
+            value_tags_added=stats.value_tags_added,
+        ), True
     width, height = parse_dimensions(exif_record or {})
     lat, lon = parse_gps(exif_record or {})
     make, model = parse_make_model(exif_record or {})
@@ -322,63 +464,121 @@ def _process_file(
     exiftool_json = json.dumps(exif_record, ensure_ascii=False) if exif_record else None
 
     if not dry_run:
-        directory_id = _ensure_directory_chain(db, root_id, root_path, file_path.parent)
-        file_id = db.insert_file(
-            directory_id=directory_id,
-            path=str(file_path),
-            rel_path=rel_path,
-            name=file_path.name,
-            ext=ext,
-            size=stat.st_size,
-            mtime=int(stat.st_mtime),
-            ctime=int(stat.st_ctime),
-            taken_ts=taken_ts,
-            taken_src=taken_src,
-            file_type=file_type,
-            width=width,
-            height=height,
-            lat=lat,
-            lon=lon,
-            make=make,
-            model=model,
-            hash_value=hash_value,
-            mime=mime,
-            exiftool_json=exiftool_json,
-        )
+        try:
+            directory_id = _ensure_directory_chain(db, root_id, root_path, file_path.parent)
+            file_id = db.insert_file(
+                directory_id=directory_id,
+                path=str(file_path),
+                rel_path=rel_path,
+                name=file_path.name,
+                ext=ext,
+                size=stat.st_size,
+                mtime=int(stat.st_mtime),
+                ctime=int(stat.st_ctime),
+                taken_ts=taken_ts,
+                taken_src=taken_src,
+                file_type=file_type,
+                width=width,
+                height=height,
+                lat=lat,
+                lon=lon,
+                make=make,
+                model=model,
+                hash_value=hash_value,
+                mime=mime,
+                exiftool_json=exiftool_json,
+            )
+        except Exception as exc:
+            _log_error(
+                errors_log,
+                root_path,
+                directory_path,
+                file_path,
+                rel_path,
+                "db_write",
+                exc,
+                file_type=file_type,
+                ext=ext,
+            )
+            db.log_error("db_write", str(file_path), str(exc))
+            if db.conn.in_transaction:
+                db.rollback()
+                db.begin()
+            return ScanStats(
+                directories=stats.directories,
+                images=stats.images,
+                videos=stats.videos,
+                warnings=stats.warnings,
+                errors=stats.errors + 1,
+                tags_added=stats.tags_added,
+                file_tag_links_added=stats.file_tag_links_added,
+                category_tags_added=stats.category_tags_added,
+                value_tags_added=stats.value_tags_added,
+            ), True
 
         if exif_record:
-            db.clear_file_tags(file_id)
-            tag_items = parse_tags(exif_record)
-            seen = set()
-            for item in tag_items:
-                key = (item.tag, item.kind, item.source)
-                if key in seen:
-                    continue
-                seen.add(key)
-                tag_id, created = db.ensure_tag(item.tag, item.kind, item.source)
-                if created:
-                    stats = ScanStats(
-                        directories=stats.directories,
-                        images=stats.images,
-                        videos=stats.videos,
-                        errors=stats.errors,
-                        tags_added=stats.tags_added + 1,
-                        file_tag_links_added=stats.file_tag_links_added,
-                        category_tags_added=stats.category_tags_added
-                        + (1 if item.kind == "category" else 0),
-                        value_tags_added=stats.value_tags_added + (1 if item.kind == "person" else 0),
-                    )
-                if db.link_file_tag(file_id, tag_id):
-                    stats = ScanStats(
-                        directories=stats.directories,
-                        images=stats.images,
-                        videos=stats.videos,
-                        errors=stats.errors,
-                        tags_added=stats.tags_added,
-                        file_tag_links_added=stats.file_tag_links_added + 1,
-                        category_tags_added=stats.category_tags_added,
-                        value_tags_added=stats.value_tags_added,
-                    )
+            try:
+                db.clear_file_tags(file_id)
+                tag_items = parse_tags(exif_record)
+                seen = set()
+                for item in tag_items:
+                    key = (item.tag, item.kind, item.source)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    tag_id, created = db.ensure_tag(item.tag, item.kind, item.source)
+                    if created:
+                        stats = ScanStats(
+                            directories=stats.directories,
+                            images=stats.images,
+                            videos=stats.videos,
+                            warnings=stats.warnings,
+                            errors=stats.errors,
+                            tags_added=stats.tags_added + 1,
+                            file_tag_links_added=stats.file_tag_links_added,
+                            category_tags_added=stats.category_tags_added
+                            + (1 if item.kind == "category" else 0),
+                            value_tags_added=stats.value_tags_added + (1 if item.kind == "person" else 0),
+                        )
+                    if db.link_file_tag(file_id, tag_id):
+                        stats = ScanStats(
+                            directories=stats.directories,
+                            images=stats.images,
+                            videos=stats.videos,
+                            warnings=stats.warnings,
+                            errors=stats.errors,
+                            tags_added=stats.tags_added,
+                            file_tag_links_added=stats.file_tag_links_added + 1,
+                            category_tags_added=stats.category_tags_added,
+                            value_tags_added=stats.value_tags_added,
+                        )
+            except Exception as exc:
+                _log_error(
+                    errors_log,
+                    root_path,
+                    directory_path,
+                    file_path,
+                    rel_path,
+                    "tag_normalize",
+                    exc,
+                    file_type=file_type,
+                    ext=ext,
+                )
+                db.log_error("tag_normalize", str(file_path), str(exc))
+                if db.conn.in_transaction:
+                    db.rollback()
+                    db.begin()
+                return ScanStats(
+                    directories=stats.directories,
+                    images=stats.images,
+                    videos=stats.videos,
+                    warnings=stats.warnings,
+                    errors=stats.errors + 1,
+                    tags_added=stats.tags_added,
+                    file_tag_links_added=stats.file_tag_links_added,
+                    category_tags_added=stats.category_tags_added,
+                    value_tags_added=stats.value_tags_added,
+                ), True
 
     if file_type == "image":
         return (
@@ -386,6 +586,7 @@ def _process_file(
                 directories=stats.directories,
                 images=stats.images + 1,
                 videos=stats.videos,
+                warnings=stats.warnings,
                 errors=stats.errors,
                 tags_added=stats.tags_added,
                 file_tag_links_added=stats.file_tag_links_added,
@@ -400,6 +601,7 @@ def _process_file(
                 directories=stats.directories,
                 images=stats.images,
                 videos=stats.videos + 1,
+                warnings=stats.warnings,
                 errors=stats.errors,
                 tags_added=stats.tags_added,
                 file_tag_links_added=stats.file_tag_links_added,
@@ -409,6 +611,66 @@ def _process_file(
             False,
         )
     return stats, False
+
+
+def _resolve_errors_log_path(
+    errors_log_path: Optional[Path],
+    db_path: Optional[Path],
+) -> Optional[Path]:
+    if errors_log_path:
+        return errors_log_path
+    if db_path:
+        return db_path.with_suffix("").with_suffix(".errors.jsonl")
+    return None
+
+
+def _truncate(value: Optional[str], limit: int = 8192) -> Optional[str]:
+    if value is None:
+        return None
+    if len(value) <= limit:
+        return value
+    return value[:limit]
+
+
+def _log_error(
+    errors_log: Optional[Path],
+    root_path: Path,
+    directory_path: Path,
+    file_path: Optional[Path],
+    rel_path: Optional[str],
+    operation: str,
+    exc: Exception,
+    *,
+    file_type: str = "other",
+    ext: str = "",
+    exiftool_exit_code: Optional[int] = None,
+    exiftool_stderr: Optional[str] = None,
+    exiftool_stdout: Optional[str] = None,
+) -> None:
+    if not errors_log:
+        return
+    payload = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "root": str(root_path),
+        "directory": str(directory_path),
+        "file_path": str(file_path) if file_path else None,
+        "rel_path": rel_path,
+        "file_type": file_type,
+        "ext": ext,
+        "operation": operation,
+        "exception_class": exc.__class__.__name__,
+        "exception_message": str(exc),
+        "exception_traceback": traceback.format_exc(),
+        "exiftool_exit_code": exiftool_exit_code,
+        "exiftool_stderr": _truncate(exiftool_stderr),
+        "exiftool_stdout": _truncate(exiftool_stdout),
+    }
+    try:
+        errors_log.parent.mkdir(parents=True, exist_ok=True)
+        with errors_log.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
 
 
 @dataclass(frozen=True)

@@ -40,6 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--json", action="store_true", help="Print report as JSON")
     parser.add_argument("--report", type=Path, help="Write report to file")
+    parser.add_argument("--errors-log", type=Path, help="Errors JSONL log path")
     parser.add_argument("--no-progress", action="store_true", help="Disable progress output")
     parser.add_argument(
         "--progress-every",
@@ -61,6 +62,14 @@ def _prompt_yes_no(prompt: str, default: bool = False) -> bool:
     if not value:
         return default
     return value in {"y", "yes"}
+
+
+def _resolve_errors_log_path(args: argparse.Namespace, config, db_path: Path) -> Path:
+    if args.errors_log:
+        return args.errors_log
+    if config.errors_log_path:
+        return Path(config.errors_log_path)
+    return db_path.with_suffix("").with_suffix(".errors.jsonl")
 
 
 def _validate_db_path(path: Path) -> Path:
@@ -95,12 +104,14 @@ def _build_report(
     payload = {
         "version": __version__,
         "root": str(root),
+        "errors_log_path": "",
         "dry_run": args.dry_run,
         "changed_only": args.changed_only,
         "include_root_files": args.include_root_files,
         "directories": result.stats.directories,
         "images": result.stats.images,
         "videos": result.stats.videos,
+        "warnings": result.stats.warnings,
         "errors": result.stats.errors,
         "tags_added": result.stats.tags_added,
         "file_tag_links_added": result.stats.file_tag_links_added,
@@ -122,6 +133,7 @@ def _write_report_text(payload: dict) -> str:
         f"Scanned {payload['directories']} directories",
         f"Indexed {payload['images']} images",
         f"Indexed {payload['videos']} videos",
+        f"Warnings: {payload['warnings']}",
         f"Errors: {payload['errors']}",
         f"Tags added: {payload['tags_added']}",
         f"Tag links added: {payload['file_tag_links_added']}",
@@ -130,6 +142,8 @@ def _write_report_text(payload: dict) -> str:
     ]
     dist = payload.get("taken_src_distribution", {})
     lines += _format_taken_src(dist)
+    if payload.get("errors") and payload.get("errors_log_path"):
+        lines.append(f"See errors log: {payload.get('errors_log_path')}")
     lines.append(f"Cancelled: {payload['cancelled']}")
     return "\n".join(lines)
 
@@ -188,6 +202,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.progress_every > 0 and file_counter % args.progress_every == 0:
             print(f"Processed {file_counter} files... ({path})")
 
+    def warning_log(message: str) -> None:
+        if args.no_progress:
+            return
+        print(f"ExifTool warning: {message}", file=sys.stderr)
+
     try:
         selections = [
             DirectorySelection(
@@ -197,6 +216,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         ]
 
+        errors_log_path = _resolve_errors_log_path(args, config, db_path)
         db = Database(Path(":memory:")) if args.dry_run else Database(db_path)
         result = scan(
             db,
@@ -208,6 +228,9 @@ def main(argv: list[str] | None = None) -> int:
             cancel_check=lambda: cancelled,
             progress_cb=None,
             file_progress_cb=lambda p: file_progress(p),
+            warning_cb=warning_log,
+            errors_log_path=errors_log_path,
+            db_path=db_path,
         )
         db.close()
         taken_src_dist = {}
@@ -216,10 +239,12 @@ def main(argv: list[str] | None = None) -> int:
             taken_src_dist = db.taken_src_distribution(str(root_path))
             db.close()
         payload = _build_report(result, taken_src_dist, root_path, args)
+        payload["errors_log_path"] = str(errors_log_path) if errors_log_path else ""
         payload["config_path"] = str(config_path)
     except KeyboardInterrupt:
         cancelled = True
         payload = {
+            "warnings": 0,
             "directories": 0,
             "images": 0,
             "videos": 0,

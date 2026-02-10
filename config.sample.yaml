@@ -14,3 +14,4 @@ video_extensions:
   - .avi
 hash_mode: none # none|quick|sha256
 mime_mode: ext # ext|magic|filecmd
+errors_log_path: ""

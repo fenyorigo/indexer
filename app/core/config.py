@@ -14,6 +14,7 @@ class AppConfig:
     video_extensions: tuple[str, ...]
     hash_mode: str
     mime_mode: str
+    errors_log_path: str
 
     def is_image(self, path: Path) -> bool:
         return path.suffix.lower() in self.image_extensions
@@ -50,6 +51,7 @@ def default_config() -> AppConfig:
         video_extensions=DEFAULT_VIDEO_EXTS,
         hash_mode="none",
         mime_mode="ext",
+        errors_log_path="",
     )
 
 
@@ -70,4 +72,5 @@ def load_config(path: Path) -> AppConfig:
         video_extensions=_tupleize(data.get("video_extensions", DEFAULT_VIDEO_EXTS)),
         hash_mode=hash_mode,
         mime_mode=mime_mode,
+        errors_log_path=str(data.get("errors_log_path", "")),
     )

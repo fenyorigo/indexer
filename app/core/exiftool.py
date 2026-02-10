@@ -11,25 +11,48 @@ from typing import Iterable
 from app.core.models import TagItem
 
 
+class ExiftoolError(RuntimeError):
+    def __init__(self, message: str, exit_code: int, stderr: str | None, stdout: str | None) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
+        self.stderr = stderr
+        self.stdout = stdout
+
+
+class ExiftoolParseError(RuntimeError):
+    def __init__(self, message: str, stdout: str | None) -> None:
+        super().__init__(message)
+        self.stdout = stdout
+
+
 def find_exiftool(explicit_path: str | None = None) -> str | None:
     if explicit_path:
         return explicit_path
     return shutil.which("exiftool")
 
 
-def run_exiftool(exiftool_path: str, files: Iterable[Path]) -> list[dict]:
+def run_exiftool(exiftool_path: str, files: Iterable[Path]) -> tuple[list[dict], str | None]:
     file_args = [str(p) for p in files]
     if not file_args:
-        return []
+        return [], None
 
     cmd = [exiftool_path, "-json", "-n"] + file_args
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.strip() or "ExifTool failed")
+    if proc.returncode >= 2:
+        raise ExiftoolError(
+            proc.stderr.strip() or "ExifTool failed",
+            proc.returncode,
+            proc.stderr,
+            proc.stdout,
+        )
     try:
-        return json.loads(proc.stdout)
+        records = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Invalid ExifTool JSON: {exc}") from exc
+        raise ExiftoolParseError(f"Invalid ExifTool JSON: {exc}", proc.stdout) from exc
+    if not records:
+        raise ExiftoolParseError("Empty ExifTool JSON", proc.stdout)
+    warning = proc.stderr.strip() if proc.returncode == 1 and proc.stderr else None
+    return records, warning
 
 
 def _as_list(value) -> list[str]:

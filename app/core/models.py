@@ -25,6 +25,7 @@ class ScanStats:
     directories: int
     images: int
     videos: int
+    warnings: int
     errors: int
     tags_added: int
     file_tag_links_added: int

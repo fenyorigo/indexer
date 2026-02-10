@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.1 - 2026-02-09
+
+### Added
+- Warnings counter and non-fatal handling for ExifTool exit code 1.
+- JSONL error logging for per-file failures with configurable path.
+
+### Fixed
+- Treat ExifTool warnings as non-fatal when JSON parses successfully.
+
 ## 1.0.0 - 2026-02-09
 
 ### Added
