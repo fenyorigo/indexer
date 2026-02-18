@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.0 - 2026-02-18
+
+### Added
+- CLI option `--images-only yes|no` (default `yes`) to limit scans to image files.
+- GUI `Images only` checkbox (default checked) to match CLI behavior.
+- Tests for CLI parsing and scanner default image-only filtering.
+
 ## 1.0.1 - 2026-02-09
 
 ### Added

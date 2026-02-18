@@ -25,6 +25,15 @@ TAKEN_SRC_ORDER = [
 ]
 
 
+def _parse_yes_no(value: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized in {"yes", "y", "true", "1"}:
+        return True
+    if normalized in {"no", "n", "false", "0"}:
+        return False
+    raise argparse.ArgumentTypeError("Expected yes or no")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Photo Indexer CLI")
     parser.add_argument("--cli", action="store_true", help="Run in CLI mode")
@@ -32,6 +41,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--root", type=Path, help="Root directory to scan")
     parser.add_argument("--dry-run", action="store_true", help="Do not write to DB")
     parser.add_argument("--changed-only", action="store_true", help="Only scan changed files")
+    parser.add_argument(
+        "--images-only",
+        type=_parse_yes_no,
+        default=True,
+        metavar="yes|no",
+        help="Only scan image files (default: yes)",
+    )
     parser.add_argument(
         "--include-root-files",
         action="store_true",
@@ -107,6 +123,7 @@ def _build_report(
         "errors_log_path": "",
         "dry_run": args.dry_run,
         "changed_only": args.changed_only,
+        "images_only": args.images_only,
         "include_root_files": args.include_root_files,
         "directories": result.stats.directories,
         "images": result.stats.images,
@@ -130,6 +147,7 @@ def _write_report_text(payload: dict) -> str:
         f"Version: {payload.get('version', '')}",
         f"Root: {payload.get('root', '')}",
         f"Config: {payload.get('config_path', '')}",
+        f"Images only: {payload.get('images_only', '')}",
         f"Scanned {payload['directories']} directories",
         f"Indexed {payload['images']} images",
         f"Indexed {payload['videos']} videos",
@@ -225,6 +243,7 @@ def main(argv: list[str] | None = None) -> int:
             selections=selections,
             dry_run=args.dry_run,
             changed_only=args.changed_only,
+            images_only=args.images_only,
             cancel_check=lambda: cancelled,
             progress_cb=None,
             file_progress_cb=lambda p: file_progress(p),

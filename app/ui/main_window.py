@@ -51,8 +51,8 @@ class ScanWorker(QObject):
         selections: list[DirectorySelection],
         dry_run: bool,
         changed_only: bool,
+        images_only: bool,
         errors_log_path: Optional[Path],
-        db_path: Path,
     ) -> None:
         super().__init__()
         self.db_path = db_path
@@ -61,8 +61,8 @@ class ScanWorker(QObject):
         self.selections = selections
         self.dry_run = dry_run
         self.changed_only = changed_only
+        self.images_only = images_only
         self.errors_log_path = errors_log_path
-        self.db_path = db_path
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -78,6 +78,7 @@ class ScanWorker(QObject):
                 self.selections,
                 dry_run=self.dry_run,
                 changed_only=self.changed_only,
+                images_only=self.images_only,
                 cancel_check=lambda: self._cancelled,
                 progress_cb=lambda current, total, path: self.progress.emit(current, total, path),
                 errors_log_path=self.errors_log_path,
@@ -131,6 +132,8 @@ class MainWindow(QMainWindow):
         self.cancel_button.setEnabled(False)
         self.dry_run_checkbox = QCheckBox("Dry run")
         self.changed_only_checkbox = QCheckBox("Only changed files")
+        self.images_only_checkbox = QCheckBox("Images only")
+        self.images_only_checkbox.setChecked(True)
         self.include_root_files_checkbox = QCheckBox("Include root files")
         self.include_root_files_checkbox.setEnabled(False)
         self.report_button = QPushButton("Scan Report")
@@ -169,6 +172,7 @@ class MainWindow(QMainWindow):
         scan_row.addWidget(self.cancel_button)
         scan_row.addWidget(self.dry_run_checkbox)
         scan_row.addWidget(self.changed_only_checkbox)
+        scan_row.addWidget(self.images_only_checkbox)
         scan_row.addWidget(self.include_root_files_checkbox)
         scan_row.addWidget(self.report_button)
         scan_row.addStretch()
@@ -390,8 +394,8 @@ class MainWindow(QMainWindow):
             selections,
             self.dry_run_checkbox.isChecked(),
             self.changed_only_checkbox.isChecked(),
+            self.images_only_checkbox.isChecked(),
             self._resolve_errors_log_path(),
-            self.db_path,
         )
         self.worker.moveToThread(self.worker_thread)
         self.worker_thread.started.connect(self.worker.run)
@@ -425,6 +429,7 @@ class MainWindow(QMainWindow):
             "root": str(self.scan_root) if self.scan_root else "",
             "dry_run": str(self.dry_run_checkbox.isChecked()),
             "changed_only": str(self.changed_only_checkbox.isChecked()),
+            "images_only": str(self.images_only_checkbox.isChecked()),
             "include_root_files": str(self.include_root_files_checkbox.isChecked()),
         }
         if self.db and not self.dry_run_checkbox.isChecked() and self.scan_root:
@@ -492,6 +497,7 @@ class MainWindow(QMainWindow):
             f"Root: {self.last_scan_context.get('root', '')}",
             f"Dry run: {self.last_scan_context.get('dry_run', '')}",
             f"Changed only: {self.last_scan_context.get('changed_only', '')}",
+            f"Images only: {self.last_scan_context.get('images_only', '')}",
             f"Include root files: {self.last_scan_context.get('include_root_files', '')}",
             f"Directories: {result.stats.directories}",
             f"Images: {result.stats.images}",
@@ -548,6 +554,7 @@ class MainWindow(QMainWindow):
             "root": self.last_scan_context.get("root", ""),
             "dry_run": self.last_scan_context.get("dry_run", ""),
             "changed_only": self.last_scan_context.get("changed_only", ""),
+            "images_only": self.last_scan_context.get("images_only", ""),
             "include_root_files": self.last_scan_context.get("include_root_files", ""),
             "directories": result.stats.directories,
             "images": result.stats.images,

@@ -92,6 +92,7 @@ def scan(
     *,
     dry_run: bool = False,
     changed_only: bool = False,
+    images_only: bool = True,
     cancel_check: Optional[Callable[[], bool]] = None,
     progress_cb: Optional[Callable[[int, int, str], None]] = None,
     file_progress_cb: Optional[Callable[[str], None]] = None,
@@ -155,6 +156,8 @@ def scan(
             db.update_directory_status(directory_id, "scanning")
 
         files = _collect_files(directory_path, job.include_files)
+        if images_only:
+            files = [path for path in files if config.is_image(path)]
         if files and changed_only and not dry_run:
             files = _filter_changed_files(db, files, config.hash_mode)
         error_in_dir = False
