@@ -119,11 +119,33 @@ def parse_tags(record: dict) -> list[TagItem]:
 def _split_hierarchical(values: list[str]) -> list[str]:
     result: list[str] = []
     for value in values:
-        if "," in value:
-            result.extend([v for v in value.split(",") if v.strip()])
-        else:
+        if "," not in value:
             result.append(value)
+            continue
+        result.extend(_split_commas_outside_parens(value))
     return result
+
+
+def _split_commas_outside_parens(value: str) -> list[str]:
+    items: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    for ch in value:
+        if ch == "(":
+            depth += 1
+        elif ch == ")" and depth > 0:
+            depth -= 1
+        if ch == "," and depth == 0:
+            part = "".join(buf).strip()
+            if part:
+                items.append(part)
+            buf = []
+            continue
+        buf.append(ch)
+    part = "".join(buf).strip()
+    if part:
+        items.append(part)
+    return items
 
 
 def _split_category_person(value: str) -> tuple[str | None, str | None]:
