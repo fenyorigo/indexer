@@ -29,6 +29,11 @@ source .venv/bin/activate
 python3 -m app --cli --db /path/to/photos.db --root /path/to/photos
 ```
 
+Important:
+- `--images-only` defaults to `yes`.
+- With default settings, videos/documents/audio are skipped.
+- To include all supported file types, run with `--images-only no`.
+
 Common options:
 ```bash
 python3 -m app --cli --db /path/to/photos.db --root /path/to/photos --dry-run
@@ -63,6 +68,7 @@ Key options:
 
 ## UI Tips
 - `Only changed files` skips unchanged files (mtime/size check; also fills missing hashes if enabled).
+- `Images only` is checked by default. Uncheck it to include videos and other non-image files in scans.
 - `Scan Report` exports the last scan summary (JSON/CSV).
 - Use the status filter to view directory scan states.
 
