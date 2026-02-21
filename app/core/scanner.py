@@ -28,6 +28,24 @@ import traceback
 from datetime import datetime, timezone
 
 
+
+DOC_EXTENSIONS = {
+    ".pdf",
+    ".txt",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
+}
+
+AUDIO_EXTENSIONS = {
+    ".mp3",
+    ".m4a",
+    ".flac",
+}
+
 def _iter_files_non_recursive(directory: Path) -> Iterable[Path]:
     for entry in directory.iterdir():
         if entry.is_file():
@@ -82,6 +100,20 @@ def _mime_type(path: Path, mode: str) -> Optional[str]:
         except Exception:
             return None
     return None
+
+
+
+def _classify_file_type(config: AppConfig, file_path: Path) -> str:
+    ext = file_path.suffix.lower()
+    if config.is_image(file_path):
+        return "image"
+    if config.is_video(file_path):
+        return "video"
+    if ext in DOC_EXTENSIONS:
+        return "doc"
+    if ext in AUDIO_EXTENSIONS:
+        return "audio"
+    return "other"
 
 
 def scan(
@@ -400,11 +432,7 @@ def _process_file(
         rel_path = str(file_path.name)
 
     ext = file_path.suffix.lower()
-    file_type = "other"
-    if config.is_image(file_path):
-        file_type = "image"
-    elif config.is_video(file_path):
-        file_type = "video"
+    file_type = _classify_file_type(config, file_path)
 
     try:
         stat = file_path.stat()

@@ -33,6 +33,7 @@ Important:
 - `--images-only` defaults to `yes`.
 - With default settings, videos/documents/audio are skipped.
 - To include all supported file types, run with `--images-only no`.
+- Non-image classification uses: `video` (`.mp4/.mov/.m4v/.avi`), `doc` (`.pdf/.txt/.doc/.docx/.xls/.xlsx/.ppt/.pptx`), `audio` (`.mp3/.m4a/.flac`).
 
 Common options:
 ```bash
@@ -68,7 +69,7 @@ Key options:
 
 ## UI Tips
 - `Only changed files` skips unchanged files (mtime/size check; also fills missing hashes if enabled).
-- `Images only` is checked by default. Uncheck it to include videos and other non-image files in scans.
+- `Images only` is checked by default. Uncheck it to include videos, documents, audio, and other non-image files in scans.
 - `Scan Report` exports the last scan summary (JSON/CSV).
 - Use the status filter to view directory scan states.
 

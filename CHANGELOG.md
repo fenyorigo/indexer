@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1 - 2026-02-21
+
+### Fixed
+- Scanner now classifies supported document/audio extensions as `doc` / `audio` instead of `other` when `images_only` is disabled.
+- Added regression test for mixed file-type classification (`image`, `video`, `doc`, `audio`).
+
 ## 1.1.0 - 2026-02-18
 
 ### Added
