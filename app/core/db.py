@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from app.core.models import RootRecord
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 @dataclass
@@ -49,6 +50,10 @@ class Database:
             self._migrate_v2_to_v3()
             cur.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             self.conn.commit()
+        elif version == 3:
+            self._migrate_v3_to_v4()
+            cur.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            self.conn.commit()
         elif version < SCHEMA_VERSION:
             raise RuntimeError(f"Unsupported schema version: {version}")
 
@@ -58,8 +63,14 @@ class Database:
             """
             CREATE TABLE meta (
                 db_version INTEGER NOT NULL,
+                indexer_version TEXT,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                include_videos INTEGER NOT NULL DEFAULT 1,
+                include_docs INTEGER NOT NULL DEFAULT 0,
+                include_audio INTEGER NOT NULL DEFAULT 0,
+                video_tags INTEGER NOT NULL DEFAULT 0,
+                video_tag_blacklist_sha256 TEXT
             )
             """
         )
@@ -153,7 +164,8 @@ class Database:
             """
         )
         cur.execute(
-            "INSERT INTO meta (db_version, created_at, updated_at) VALUES (?, datetime('now'), datetime('now'))",
+            "INSERT INTO meta (db_version, indexer_version, created_at, updated_at, include_videos, include_docs, include_audio, video_tags, video_tag_blacklist_sha256)\n"
+            "VALUES (?, NULL, datetime('now'), datetime('now'), 1, 0, 0, 0, NULL)",
             (SCHEMA_VERSION,),
         )
         cur.execute("CREATE INDEX idx_files_path ON files(path)")
@@ -448,6 +460,40 @@ class Database:
         cur = self.conn.cursor()
         cur.execute("ALTER TABLE files ADD COLUMN taken_src TEXT NOT NULL DEFAULT 'mtime_fallback'")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_files_taken_ts ON files(taken_ts)")
+
+    def _migrate_v3_to_v4(self) -> None:
+        cur = self.conn.cursor()
+        cur.execute("ALTER TABLE meta ADD COLUMN indexer_version TEXT")
+        cur.execute("ALTER TABLE meta ADD COLUMN include_videos INTEGER NOT NULL DEFAULT 1")
+        cur.execute("ALTER TABLE meta ADD COLUMN include_docs INTEGER NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE meta ADD COLUMN include_audio INTEGER NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE meta ADD COLUMN video_tags INTEGER NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE meta ADD COLUMN video_tag_blacklist_sha256 TEXT")
+
+    def update_scan_meta(
+        self,
+        *,
+        indexer_version: str,
+        include_videos: bool,
+        include_docs: bool,
+        include_audio: bool,
+        video_tags: bool,
+        video_tag_blacklist_sha256: Optional[str],
+    ) -> None:
+        self.conn.execute(
+            "UPDATE meta\n"
+            "SET db_version = ?, indexer_version = ?, updated_at = datetime('now'),\n"
+            "    include_videos = ?, include_docs = ?, include_audio = ?, video_tags = ?, video_tag_blacklist_sha256 = ?",
+            (
+                SCHEMA_VERSION,
+                indexer_version,
+                1 if include_videos else 0,
+                1 if include_docs else 0,
+                1 if include_audio else 0,
+                1 if video_tags else 0,
+                video_tag_blacklist_sha256,
+            ),
+        )
 
     def log_error(self, scope: str, message: str, details: Optional[str] = None) -> None:
         self.conn.execute(

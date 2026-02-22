@@ -1,12 +1,24 @@
 # Changelog
 
-## 1.2.0 - 2026-02-22
+## 1.6.0 - 2026-02-22
 
 ### Added
 - CLI path split with `--media-root` (scan source) and `--db-media-path` (stored DB base path).
 - Backward-compatible `--root` alias for CLI.
 - Scanner path mapping so `roots.path`, `directories.path`, and `files.path` can differ from filesystem scan path.
-- Tests covering DB media path mapping and new CLI arguments.
+- Replaced single `--images-only` behavior with independent include toggles:
+  - `--include-videos` (default `yes`)
+  - `--include-docs` (default `no`)
+  - `--include-audio` (default `no`)
+- Added `--video-tags` (default `no`) so videos can be indexed into `files` without creating video-derived tag rows.
+- Added optional `--video-tag-blacklist` (newline-separated UTF-8), applied when `--video-tags yes`.
+- Added scan-option persistence in `meta`:
+  - `indexer_version`, `include_videos`, `include_docs`, `include_audio`, `video_tags`, `video_tag_blacklist_sha256`.
+- Added tests for:
+  - DB media path mapping
+  - new CLI arguments
+  - video indexed but no `file_tags` when `video_tags=no`
+  - docs/audio excluded by default.
 
 ## 1.1.1 - 2026-02-21
 

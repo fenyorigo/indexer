@@ -30,9 +30,13 @@ python3 -m app --cli --db /path/to/photos.db --media-root /path/to/photos
 ```
 
 Important:
-- `--images-only` defaults to `yes`.
-- With default settings, videos/documents/audio are skipped.
-- To include all supported file types, run with `--images-only no`.
+- `--include-videos` defaults to `yes`.
+- `--include-docs` defaults to `no`.
+- `--include-audio` defaults to `no`.
+- `--video-tags` defaults to `no` (videos are indexed, but no tag rows are created from video metadata unless enabled).
+- `--images-only` is kept as a legacy compatibility switch:
+  - `--images-only yes` => `include_videos=no`, `include_docs=no`, `include_audio=no`
+  - `--images-only no` => `include_videos=yes`, `include_docs=yes`, `include_audio=yes`
 - `--media-root` is where indexer reads media files from.
 - `--db-media-path` controls the base path written into SQLite `roots/directories/files.path` values.
 - Non-image classification uses: `video` (`.mp4/.mov/.m4v/.avi`), `doc` (`.pdf/.txt/.doc/.docx/.xls/.xlsx/.ppt/.pptx`), `audio` (`.mp3/.m4a/.flac`).
@@ -41,7 +45,10 @@ Common options:
 ```bash
 python3 -m app --cli --db /path/to/photos.db --media-root /path/to/photos --dry-run
 python3 -m app --cli --db /path/to/photos.db --media-root /path/to/photos --changed-only
-python3 -m app --cli --db /path/to/photos.db --media-root /path/to/photos --images-only no
+python3 -m app --cli --db /path/to/photos.db --media-root /path/to/photos --include-videos yes --include-docs no --include-audio no
+python3 -m app --cli --db /path/to/photos.db --media-root /path/to/photos --video-tags no
+python3 -m app --cli --db /path/to/photos.db --media-root /path/to/photos --video-tags yes --video-tag-blacklist /path/to/video-tag-blacklist.txt
+python3 -m app --cli --db /path/to/photos.db --media-root /path/to/photos --images-only yes
 python3 -m app --cli --db /path/to/photos.db --media-root /path/to/photos --include-root-files
 python3 -m app --cli --db /path/to/photos.db --media-root /Volumes/SanDisk --db-media-path /data/photos
 python3 -m app --cli --db /path/to/photos.db --media-root /path/to/photos --json --report scan_report.json

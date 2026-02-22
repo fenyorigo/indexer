@@ -4,6 +4,7 @@ import hashlib
 import json
 import mimetypes
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,6 +46,10 @@ AUDIO_EXTENSIONS = {
     ".m4a",
     ".flac",
 }
+
+_SPACE_RE = re.compile(r"\s+")
+_TRAILING_PUNCT_RE = re.compile(r"[\s\.,;:!?]+$")
+
 
 def _iter_files_non_recursive(directory: Path) -> Iterable[Path]:
     for entry in directory.iterdir():
@@ -116,6 +121,50 @@ def _classify_file_type(config: AppConfig, file_path: Path) -> str:
     return "other"
 
 
+def _is_indexable_file(
+    file_path: Path,
+    config: AppConfig,
+    include_videos: bool,
+    include_docs: bool,
+    include_audio: bool,
+) -> bool:
+    file_type = _classify_file_type(config, file_path)
+    if file_type == "image":
+        return True
+    if file_type == "video":
+        return include_videos
+    if file_type == "doc":
+        return include_docs
+    if file_type == "audio":
+        return include_audio
+    return False
+
+
+def _normalize_blacklist_token(value: str) -> str:
+    lowered = _SPACE_RE.sub(" ", value.strip().lower())
+    return _TRAILING_PUNCT_RE.sub("", lowered)
+
+
+def _load_video_tag_blacklist(enabled: bool, path: Optional[Path]) -> set[str]:
+    if not enabled or path is None:
+        return set()
+    text = path.read_text(encoding="utf-8")
+    items = set()
+    for raw in text.splitlines():
+        normalized = _normalize_blacklist_token(raw)
+        if normalized:
+            items.add(normalized)
+    return items
+
+
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def scan(
     db: Database,
     config: AppConfig,
@@ -125,7 +174,12 @@ def scan(
     db_media_root: Optional[Path] = None,
     dry_run: bool = False,
     changed_only: bool = False,
-    images_only: bool = True,
+    include_videos: bool = True,
+    include_docs: bool = False,
+    include_audio: bool = False,
+    images_only: Optional[bool] = None,
+    video_tags: bool = False,
+    video_tag_blacklist_path: Optional[Path] = None,
     cancel_check: Optional[Callable[[], bool]] = None,
     progress_cb: Optional[Callable[[int, int, str], None]] = None,
     file_progress_cb: Optional[Callable[[str], None]] = None,
@@ -133,6 +187,15 @@ def scan(
     errors_log_path: Optional[Path] = None,
     db_path: Optional[Path] = None,
 ) -> ScanResult:
+    if images_only is True:
+        include_videos = False
+        include_docs = False
+        include_audio = False
+    elif images_only is False:
+        include_videos = True
+        include_docs = True
+        include_audio = True
+
     media_root = root_path
     target_root = db_media_root if db_media_root is not None else media_root
     root_id = db.ensure_root(str(target_root)) if not dry_run else -1
@@ -168,6 +231,19 @@ def scan(
         return ScanResult(stats=stats, cancelled=False)
 
     errors_log = _resolve_errors_log_path(errors_log_path, db_path)
+    video_tag_blacklist = _load_video_tag_blacklist(video_tags, video_tag_blacklist_path)
+    video_tag_blacklist_sha256 = _sha256_path(video_tag_blacklist_path) if video_tags and video_tag_blacklist_path else None
+    if not dry_run:
+        from app import __version__
+
+        db.update_scan_meta(
+            indexer_version=__version__,
+            include_videos=include_videos,
+            include_docs=include_docs,
+            include_audio=include_audio,
+            video_tags=video_tags,
+            video_tag_blacklist_sha256=video_tag_blacklist_sha256,
+        )
     jobs = _build_jobs(selections)
     total_jobs = len(jobs)
     processed_jobs = 0
@@ -192,8 +268,11 @@ def scan(
             db.update_directory_status(directory_id, "scanning")
 
         files = _collect_files(directory_path, job.include_files)
-        if images_only:
-            files = [path for path in files if config.is_image(path)]
+        files = [
+            path
+            for path in files
+            if _is_indexable_file(path, config, include_videos, include_docs, include_audio)
+        ]
         if files and changed_only and not dry_run:
             files = _filter_changed_files(db, files, config.hash_mode, media_root, target_root)
         error_in_dir = False
@@ -336,6 +415,8 @@ def scan(
                 dry_run=dry_run,
                 errors_log=errors_log,
                 directory_path=directory_path,
+                video_tags=video_tags,
+                video_tag_blacklist=video_tag_blacklist,
             )
             if file_progress_cb:
                 file_progress_cb(str(file_path))
@@ -433,6 +514,8 @@ def _process_file(
     dry_run: bool,
     errors_log: Optional[Path],
     directory_path: Path,
+    video_tags: bool,
+    video_tag_blacklist: set[str],
 ) -> tuple[ScanStats, bool]:
     if _is_hidden(file_path):
         return stats, False
@@ -563,8 +646,17 @@ def _process_file(
 
         if exif_record:
             try:
-                db.clear_file_tags(file_id)
-                tag_items = parse_tags(exif_record)
+                if file_type == "video" and not video_tags:
+                    tag_items = []
+                else:
+                    db.clear_file_tags(file_id)
+                    tag_items = parse_tags(exif_record)
+                    if file_type == "video" and video_tag_blacklist:
+                        tag_items = [
+                            item
+                            for item in tag_items
+                            if _normalize_blacklist_token(item.tag) not in video_tag_blacklist
+                        ]
                 seen = set()
                 for item in tag_items:
                     key = (item.tag, item.kind, item.source)

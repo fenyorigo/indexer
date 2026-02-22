@@ -25,4 +25,14 @@ def test_db_init_and_version(tmp_path: Path) -> None:
     assert "tags" in tables
     assert "file_tags" in tables
     assert "errors" in tables
+    meta_cols = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(meta)").fetchall()
+    }
+    assert "indexer_version" in meta_cols
+    assert "include_videos" in meta_cols
+    assert "include_docs" in meta_cols
+    assert "include_audio" in meta_cols
+    assert "video_tags" in meta_cols
+    assert "video_tag_blacklist_sha256" in meta_cols
     conn.close()

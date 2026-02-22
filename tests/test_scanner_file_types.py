@@ -8,7 +8,7 @@ from app.core.models import DirectorySelection
 from app.core.scanner import scan
 
 
-def test_scan_classifies_docs_and_audio_when_images_only_disabled(tmp_path: Path, monkeypatch) -> None:
+def test_scan_classifies_docs_and_audio_when_included(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "root"
     root.mkdir()
 
@@ -33,7 +33,9 @@ def test_scan_classifies_docs_and_audio_when_images_only_disabled(tmp_path: Path
         default_config(),
         root,
         selections=[DirectorySelection(path=root, recursive=True, include_root_files=True)],
-        images_only=False,
+        include_videos=True,
+        include_docs=True,
+        include_audio=True,
         errors_log_path=tmp_path / "errors.jsonl",
         db_path=db_path,
     )

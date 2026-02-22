@@ -33,6 +33,7 @@ def test_scan_defaults_to_images_only(tmp_path: Path, monkeypatch) -> None:
         default_config(),
         root,
         selections=[DirectorySelection(path=root, recursive=True, include_root_files=True)],
+        images_only=True,
         errors_log_path=tmp_path / "errors.jsonl",
         db_path=db_path,
     )

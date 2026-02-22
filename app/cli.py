@@ -55,9 +55,42 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--images-only",
         type=_parse_yes_no,
-        default=True,
+        default=None,
         metavar="yes|no",
-        help="Only scan image files (default: yes)",
+        help="Legacy compatibility switch. yes => disable videos/docs/audio; no => enable videos/docs/audio.",
+    )
+    parser.add_argument(
+        "--include-videos",
+        type=_parse_yes_no,
+        default=None,
+        metavar="yes|no",
+        help="Include video files in SQLite (default: yes)",
+    )
+    parser.add_argument(
+        "--include-docs",
+        type=_parse_yes_no,
+        default=None,
+        metavar="yes|no",
+        help="Include document files in SQLite (default: no)",
+    )
+    parser.add_argument(
+        "--include-audio",
+        type=_parse_yes_no,
+        default=None,
+        metavar="yes|no",
+        help="Include audio files in SQLite (default: no)",
+    )
+    parser.add_argument(
+        "--video-tags",
+        type=_parse_yes_no,
+        default=False,
+        metavar="yes|no",
+        help="Extract and store tags for videos (default: no)",
+    )
+    parser.add_argument(
+        "--video-tag-blacklist",
+        type=Path,
+        help="Optional newline-separated UTF-8 blacklist applied only when --video-tags yes",
     )
     parser.add_argument(
         "--include-root-files",
@@ -138,6 +171,11 @@ def _build_report(
         "dry_run": args.dry_run,
         "changed_only": args.changed_only,
         "images_only": args.images_only,
+        "include_videos": args.include_videos,
+        "include_docs": args.include_docs,
+        "include_audio": args.include_audio,
+        "video_tags": args.video_tags,
+        "video_tag_blacklist": str(args.video_tag_blacklist) if args.video_tag_blacklist else "",
         "include_root_files": args.include_root_files,
         "directories": result.stats.directories,
         "images": result.stats.images,
@@ -163,6 +201,10 @@ def _write_report_text(payload: dict) -> str:
         f"DB media path: {payload.get('db_media_path', '')}",
         f"Config: {payload.get('config_path', '')}",
         f"Images only: {payload.get('images_only', '')}",
+        f"Include videos: {payload.get('include_videos', '')}",
+        f"Include docs: {payload.get('include_docs', '')}",
+        f"Include audio: {payload.get('include_audio', '')}",
+        f"Video tags: {payload.get('video_tags', '')}",
         f"Scanned {payload['directories']} directories",
         f"Indexed {payload['images']} images",
         f"Indexed {payload['videos']} videos",
@@ -211,6 +253,20 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc))
         return 1
     db_media_path = args.db_media_path if args.db_media_path else media_root_path
+    include_videos = True if args.include_videos is None else bool(args.include_videos)
+    include_docs = False if args.include_docs is None else bool(args.include_docs)
+    include_audio = False if args.include_audio is None else bool(args.include_audio)
+    if args.images_only is True:
+        include_videos = False
+        include_docs = False
+        include_audio = False
+    elif args.images_only is False:
+        include_videos = True
+        include_docs = True
+        include_audio = True
+    args.include_videos = include_videos
+    args.include_docs = include_docs
+    args.include_audio = include_audio
 
     config_path = Path("config.yaml")
     config = load_config(config_path)
@@ -260,7 +316,12 @@ def main(argv: list[str] | None = None) -> int:
             db_media_root=db_media_path,
             dry_run=args.dry_run,
             changed_only=args.changed_only,
+            include_videos=include_videos,
+            include_docs=include_docs,
+            include_audio=include_audio,
             images_only=args.images_only,
+            video_tags=args.video_tags,
+            video_tag_blacklist_path=args.video_tag_blacklist,
             cancel_check=lambda: cancelled,
             progress_cb=None,
             file_progress_cb=lambda p: file_progress(p),
