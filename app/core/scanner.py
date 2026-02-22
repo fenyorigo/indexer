@@ -122,6 +122,7 @@ def scan(
     root_path: Path,
     selections: list[DirectorySelection],
     *,
+    db_media_root: Optional[Path] = None,
     dry_run: bool = False,
     changed_only: bool = False,
     images_only: bool = True,
@@ -132,7 +133,9 @@ def scan(
     errors_log_path: Optional[Path] = None,
     db_path: Optional[Path] = None,
 ) -> ScanResult:
-    root_id = db.ensure_root(str(root_path)) if not dry_run else -1
+    media_root = root_path
+    target_root = db_media_root if db_media_root is not None else media_root
+    root_id = db.ensure_root(str(target_root)) if not dry_run else -1
     stats = ScanStats(
         directories=0,
         images=0,
@@ -175,8 +178,9 @@ def scan(
             break
 
         directory_path = job.path
-        if db.directory_exists(str(directory_path)) and not dry_run and not changed_only:
-            db.delete_directory_subtree(str(directory_path))
+        db_directory_path = _map_source_to_db_path(media_root, target_root, directory_path)
+        if db.directory_exists(str(db_directory_path)) and not dry_run and not changed_only:
+            db.delete_directory_subtree(str(db_directory_path))
 
         if _is_hidden(directory_path):
             continue
@@ -184,14 +188,14 @@ def scan(
         directory_id = None
         if not dry_run:
             db.begin()
-            directory_id = _ensure_directory_chain(db, root_id, root_path, directory_path)
+            directory_id = _ensure_directory_chain(db, root_id, media_root, target_root, directory_path)
             db.update_directory_status(directory_id, "scanning")
 
         files = _collect_files(directory_path, job.include_files)
         if images_only:
             files = [path for path in files if config.is_image(path)]
         if files and changed_only and not dry_run:
-            files = _filter_changed_files(db, files, config.hash_mode)
+            files = _filter_changed_files(db, files, config.hash_mode, media_root, target_root)
         error_in_dir = False
 
         exif_records = []
@@ -216,7 +220,7 @@ def scan(
                 error_in_dir = True
                 _log_error(
                     errors_log,
-                    root_path,
+                    media_root,
                     directory_path,
                     None,
                     None,
@@ -250,7 +254,7 @@ def scan(
                 error_in_dir = True
                 _log_error(
                     errors_log,
-                    root_path,
+                    media_root,
                     directory_path,
                     None,
                     None,
@@ -282,7 +286,7 @@ def scan(
                 error_in_dir = True
                 _log_error(
                     errors_log,
-                    root_path,
+                    media_root,
                     directory_path,
                     None,
                     None,
@@ -324,7 +328,8 @@ def scan(
                 db,
                 config,
                 root_id,
-                root_path,
+                media_root,
+                target_root,
                 file_path,
                 stats,
                 record_map.get(str(file_path)),
@@ -344,7 +349,7 @@ def scan(
             db.update_directory_status(directory_id, "partial" if error_in_dir else "done")
             db.commit()
 
-        _mark_directory(db, counted_dirs, root_id, root_path, directory_path, dry_run=dry_run)
+        _mark_directory(db, counted_dirs, root_id, media_root, target_root, directory_path, dry_run=dry_run)
         stats = _recount_dirs(stats, counted_dirs)
         processed_jobs += 1
         if progress_cb:
@@ -355,24 +360,30 @@ def scan(
     return ScanResult(stats=stats, cancelled=cancelled)
 
 
-def _ensure_directory_chain(db: Database, root_id: int, root_path: Path, dir_path: Path) -> int:
+def _ensure_directory_chain(
+    db: Database,
+    root_id: int,
+    media_root: Path,
+    db_root: Path,
+    dir_path: Path,
+) -> int:
     try:
-        rel_path = str(dir_path.relative_to(root_path))
+        rel_path = str(dir_path.relative_to(media_root))
     except ValueError:
         rel_path = dir_path.name
 
     parts = Path(rel_path).parts if rel_path else ()
-    current_path = root_path
+    current_path = db_root
     parent_id = None
     depth = 0
 
     if rel_path == "" or rel_path == ".":
-        return db.ensure_directory(root_id, None, str(root_path), "", 0)
+        return db.ensure_directory(root_id, None, str(db_root), "", 0)
 
     for part in parts:
         depth += 1
         current_path = current_path / part
-        rel = str(current_path.relative_to(root_path))
+        rel = str(current_path.relative_to(db_root))
         dir_id = db.ensure_directory(root_id, parent_id, str(current_path), rel, depth)
         parent_id = dir_id
 
@@ -384,13 +395,14 @@ def _mark_directory(
     db: Database,
     counted_dirs: set[str],
     root_id: int,
-    root_path: Path,
+    media_root: Path,
+    db_root: Path,
     dir_path: Path,
     *,
     dry_run: bool,
 ) -> None:
     if not dry_run:
-        _ensure_directory_chain(db, root_id, root_path, dir_path)
+        _ensure_directory_chain(db, root_id, media_root, db_root, dir_path)
     counted_dirs.add(str(dir_path))
 
 
@@ -412,7 +424,8 @@ def _process_file(
     db: Database,
     config: AppConfig,
     root_id: int,
-    root_path: Path,
+    media_root: Path,
+    db_root: Path,
     file_path: Path,
     stats: ScanStats,
     exif_record: Optional[dict],
@@ -427,7 +440,7 @@ def _process_file(
         return stats, False
 
     try:
-        rel_path = str(file_path.relative_to(root_path))
+        rel_path = str(file_path.relative_to(media_root))
     except ValueError:
         rel_path = str(file_path.name)
 
@@ -439,7 +452,7 @@ def _process_file(
     except OSError as exc:
         _log_error(
             errors_log,
-            root_path,
+            media_root,
             directory_path,
             file_path,
             rel_path,
@@ -467,7 +480,7 @@ def _process_file(
     except Exception as exc:
         _log_error(
             errors_log,
-            root_path,
+            media_root,
             directory_path,
             file_path,
             rel_path,
@@ -496,10 +509,11 @@ def _process_file(
 
     if not dry_run:
         try:
-            directory_id = _ensure_directory_chain(db, root_id, root_path, file_path.parent)
+            directory_id = _ensure_directory_chain(db, root_id, media_root, db_root, file_path.parent)
+            db_file_path = _map_source_to_db_path(media_root, db_root, file_path)
             file_id = db.insert_file(
                 directory_id=directory_id,
-                path=str(file_path),
+                path=str(db_file_path),
                 rel_path=rel_path,
                 name=file_path.name,
                 ext=ext,
@@ -522,7 +536,7 @@ def _process_file(
         except Exception as exc:
             _log_error(
                 errors_log,
-                root_path,
+                media_root,
                 directory_path,
                 file_path,
                 rel_path,
@@ -586,7 +600,7 @@ def _process_file(
             except Exception as exc:
                 _log_error(
                     errors_log,
-                    root_path,
+                    media_root,
                     directory_path,
                     file_path,
                     rel_path,
@@ -740,11 +754,18 @@ def _collect_files(directory: Path, include_files: bool) -> list[Path]:
     return files
 
 
-def _filter_changed_files(db: Database, files: list[Path], hash_mode: str) -> list[Path]:
-    by_path = db.get_files_by_paths([str(p) for p in files])
+def _filter_changed_files(
+    db: Database,
+    files: list[Path],
+    hash_mode: str,
+    media_root: Path,
+    db_root: Path,
+) -> list[Path]:
+    db_paths = [str(_map_source_to_db_path(media_root, db_root, p)) for p in files]
+    by_path = db.get_files_by_paths(db_paths)
     changed: list[Path] = []
     for path in files:
-        row = by_path.get(str(path))
+        row = by_path.get(str(_map_source_to_db_path(media_root, db_root, path)))
         if row is None:
             changed.append(path)
             continue
@@ -762,3 +783,11 @@ def _filter_changed_files(db: Database, files: list[Path], hash_mode: str) -> li
                 changed.append(path)
         # Unchanged otherwise.
     return changed
+
+
+def _map_source_to_db_path(media_root: Path, db_root: Path, source_path: Path) -> Path:
+    try:
+        rel = source_path.relative_to(media_root)
+    except ValueError:
+        return db_root / source_path.name
+    return db_root / rel

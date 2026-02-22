@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0 - 2026-02-22
+
+### Added
+- CLI path split with `--media-root` (scan source) and `--db-media-path` (stored DB base path).
+- Backward-compatible `--root` alias for CLI.
+- Scanner path mapping so `roots.path`, `directories.path`, and `files.path` can differ from filesystem scan path.
+- Tests covering DB media path mapping and new CLI arguments.
+
 ## 1.1.1 - 2026-02-21
 
 ### Fixed

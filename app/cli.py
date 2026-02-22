@@ -38,7 +38,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Photo Indexer CLI")
     parser.add_argument("--cli", action="store_true", help="Run in CLI mode")
     parser.add_argument("--db", type=Path, help="SQLite DB file path")
-    parser.add_argument("--root", type=Path, help="Root directory to scan")
+    parser.add_argument(
+        "--media-root",
+        "--root",
+        dest="media_root",
+        type=Path,
+        help="Root directory to scan (source media path)",
+    )
+    parser.add_argument(
+        "--db-media-path",
+        type=Path,
+        help="Media base path written into DB paths (defaults to --media-root)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Do not write to DB")
     parser.add_argument("--changed-only", action="store_true", help="Only scan changed files")
     parser.add_argument(
@@ -114,12 +125,15 @@ def _format_taken_src(dist: dict[str, int]) -> list[str]:
 def _build_report(
     result: ScanResult,
     taken_src_dist: dict[str, int],
-    root: Path,
+    media_root: Path,
+    db_media_path: Path,
     args: argparse.Namespace,
 ) -> dict:
     payload = {
         "version": __version__,
-        "root": str(root),
+        "root": str(media_root),
+        "media_root": str(media_root),
+        "db_media_path": str(db_media_path),
         "errors_log_path": "",
         "dry_run": args.dry_run,
         "changed_only": args.changed_only,
@@ -145,7 +159,8 @@ def _build_report(
 def _write_report_text(payload: dict) -> str:
     lines = [
         f"Version: {payload.get('version', '')}",
-        f"Root: {payload.get('root', '')}",
+        f"Media root: {payload.get('media_root', '')}",
+        f"DB media path: {payload.get('db_media_path', '')}",
         f"Config: {payload.get('config_path', '')}",
         f"Images only: {payload.get('images_only', '')}",
         f"Scanned {payload['directories']} directories",
@@ -178,23 +193,24 @@ def main(argv: list[str] | None = None) -> int:
         value = _prompt_path("DB path: ")
         if value:
             args.db = Path(value)
-    if not args.root:
+    if not args.media_root:
         value = _prompt_path("Scan root directory: ")
         if value:
-            args.root = Path(value)
-    if args.dry_run is False and args.root is not None:
+            args.media_root = Path(value)
+    if args.dry_run is False and args.media_root is not None:
         args.dry_run = _prompt_yes_no("Dry run?", default=False)
 
-    if not args.db or not args.root:
-        print("Missing required --db or --root")
+    if not args.db or not args.media_root:
+        print("Missing required --db or --media-root")
         return 1
 
     try:
         db_path = _validate_db_path(args.db)
-        root_path = _validate_root(args.root)
+        media_root_path = _validate_root(args.media_root)
     except ValueError as exc:
         print(str(exc))
         return 1
+    db_media_path = args.db_media_path if args.db_media_path else media_root_path
 
     config_path = Path("config.yaml")
     config = load_config(config_path)
@@ -228,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         selections = [
             DirectorySelection(
-                path=root_path,
+                path=media_root_path,
                 recursive=True,
                 include_root_files=args.include_root_files,
             )
@@ -239,8 +255,9 @@ def main(argv: list[str] | None = None) -> int:
         result = scan(
             db,
             config,
-            root_path,
+            media_root_path,
             selections=selections,
+            db_media_root=db_media_path,
             dry_run=args.dry_run,
             changed_only=args.changed_only,
             images_only=args.images_only,
@@ -255,9 +272,9 @@ def main(argv: list[str] | None = None) -> int:
         taken_src_dist = {}
         if not args.dry_run:
             db = Database(db_path)
-            taken_src_dist = db.taken_src_distribution(str(root_path))
+            taken_src_dist = db.taken_src_distribution(str(db_media_path))
             db.close()
-        payload = _build_report(result, taken_src_dist, root_path, args)
+        payload = _build_report(result, taken_src_dist, media_root_path, db_media_path, args)
         payload["errors_log_path"] = str(errors_log_path) if errors_log_path else ""
         payload["config_path"] = str(config_path)
     except KeyboardInterrupt:

@@ -26,33 +26,36 @@ python3 -m app
 Run headless scans with `--cli`:
 ```bash
 source .venv/bin/activate
-python3 -m app --cli --db /path/to/photos.db --root /path/to/photos
+python3 -m app --cli --db /path/to/photos.db --media-root /path/to/photos
 ```
 
 Important:
 - `--images-only` defaults to `yes`.
 - With default settings, videos/documents/audio are skipped.
 - To include all supported file types, run with `--images-only no`.
+- `--media-root` is where indexer reads media files from.
+- `--db-media-path` controls the base path written into SQLite `roots/directories/files.path` values.
 - Non-image classification uses: `video` (`.mp4/.mov/.m4v/.avi`), `doc` (`.pdf/.txt/.doc/.docx/.xls/.xlsx/.ppt/.pptx`), `audio` (`.mp3/.m4a/.flac`).
 
 Common options:
 ```bash
-python3 -m app --cli --db /path/to/photos.db --root /path/to/photos --dry-run
-python3 -m app --cli --db /path/to/photos.db --root /path/to/photos --changed-only
-python3 -m app --cli --db /path/to/photos.db --root /path/to/photos --images-only no
-python3 -m app --cli --db /path/to/photos.db --root /path/to/photos --include-root-files
-python3 -m app --cli --db /path/to/photos.db --root /path/to/photos --json --report scan_report.json
-python3 -m app --cli --db /path/to/photos.db --root /path/to/photos --errors-log /path/to/errors.jsonl
+python3 -m app --cli --db /path/to/photos.db --media-root /path/to/photos --dry-run
+python3 -m app --cli --db /path/to/photos.db --media-root /path/to/photos --changed-only
+python3 -m app --cli --db /path/to/photos.db --media-root /path/to/photos --images-only no
+python3 -m app --cli --db /path/to/photos.db --media-root /path/to/photos --include-root-files
+python3 -m app --cli --db /path/to/photos.db --media-root /Volumes/SanDisk --db-media-path /data/photos
+python3 -m app --cli --db /path/to/photos.db --media-root /path/to/photos --json --report scan_report.json
+python3 -m app --cli --db /path/to/photos.db --media-root /path/to/photos --errors-log /path/to/errors.jsonl
 ```
 
 Fedora example:
 ```bash
-python3 -m app --cli --db /home/user/photos.db --root /home/user/Pictures
+python3 -m app --cli --db /home/user/photos.db --media-root /home/user/Pictures
 ```
 
 macOS example:
 ```bash
-python3 -m app --cli --db /Users/you/photos.db --root /Users/you/Pictures
+python3 -m app --cli --db /Users/you/photos.db --media-root /Users/you/Pictures
 ```
 
 ## Migration
