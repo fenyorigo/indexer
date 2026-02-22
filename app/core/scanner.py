@@ -437,6 +437,7 @@ def scan(
             progress_cb(processed_jobs, total_jobs, str(directory_path))
 
     if not dry_run:
+        db.prune_orphan_tags()
         db.update_root_scan_time(root_id)
     return ScanResult(stats=stats, cancelled=cancelled)
 

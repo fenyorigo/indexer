@@ -361,6 +361,20 @@ class Database:
     def clear_file_tags(self, file_id: int) -> None:
         self.conn.execute("DELETE FROM file_tags WHERE file_id = ?", (file_id,))
 
+    def prune_orphan_tags(self) -> int:
+        cur = self.conn.execute(
+            """
+            DELETE FROM tags
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM file_tags ft
+                WHERE ft.tag_id = tags.id
+            )
+            """
+        )
+        self.conn.commit()
+        return int(cur.rowcount)
+
     def begin(self) -> None:
         if self.conn.in_transaction:
             return

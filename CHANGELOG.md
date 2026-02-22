@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.1 - 2026-02-22
+
+### Fixed
+- Added automatic post-scan orphan tag pruning so `tags` rows without any `file_tags` link are removed after indexing.
+- Added regression test ensuring orphan tags are cleaned up automatically at the end of a scan.
+
 ## 1.6.0 - 2026-02-22
 
 ### Added
